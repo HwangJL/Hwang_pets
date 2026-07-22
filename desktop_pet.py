@@ -2,10 +2,13 @@
 """
 桌面宠物程序
 - 透明无边框置顶窗口
+- 多精灵素材：6种站姿 / 6种动作 / 8种表情
 - 左键拖动 / 点击触发互动(跳跃、压扁回弹、左右抖动)
-- 互动时随机中文气泡
+- 互动时切换动作精灵 + 随机表情 + 中文气泡
+- 闲置时自动切换站姿
 - 右键菜单：调整大小、置顶开关、退出
 - 滚轮缩放
+- 系统托盘图标
 """
 import sys
 import os
@@ -38,6 +41,13 @@ def resource_path(relative):
     return os.path.join(base, relative)
 
 
+def load_sprite(name):
+    """加载 sprites 目录下的精灵图"""
+    path = resource_path(os.path.join("sprites", f"{name}.png"))
+    pm = QPixmap(path)
+    return pm
+
+
 # 互动时随机显示的中文短句
 PHRASES = [
     "今天也要元气满满哦！",
@@ -66,9 +76,17 @@ PHRASES = [
     "探险家从不认输！",
 ]
 
+# 不同互动类型对应的短语
+INTERACTION_PHRASES = {
+    "jump": ["哇哦，飞起来啦！", "世界那么大，想去看看！", "想去爬山吗？", "探险家从不认输！"],
+    "squash": ["我扁了，但没完全扁！", "别戳我啦，会痒的~", "再戳我就生气了！", "咕噜噜…肚子饿了。"],
+    "shake": ["摇摇晃晃，我醉了吗？", "别拉我，我晕车！", "嘿嘿，你好呀！", "我在思考人生…"],
+    "idle": ["今天也要元气满满哦！", "今天天气真不错呀~", "嘘…让我再眯一会儿。", "陪我聊聊天呗~"],
+}
+
 
 class BubbleWidget(QWidget):
-    """对话气泡：不透明白色圆角背景 + 下方小尾巴"""
+    """对话气泡：不透明白色圆角背景 + 下方小尾巴 + 可选表情图"""
 
     def __init__(self):
         super().__init__()
@@ -77,20 +95,24 @@ class BubbleWidget(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.text = ""
+        self.face_pixmap = None  # 可选的表情图
         self.font = QFont("Microsoft YaHei", 10, QFont.Bold)
         self.pad_x = 16
         self.pad_y = 10
         self.tail_h = 10
+        self.face_size = 32  # 表情图显示大小
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.hide)
 
-    def set_text(self, text):
+    def set_content(self, text, face_pixmap=None):
         self.text = text
+        self.face_pixmap = face_pixmap
         fm = QFontMetrics(self.font)
         tw = fm.horizontalAdvance(text)
         th = fm.height()
-        w = tw + self.pad_x * 2 + 6
-        h = th + self.pad_y * 2
+        face_w = self.face_size + 8 if face_pixmap else 0
+        w = tw + self.pad_x * 2 + 6 + face_w
+        h = max(th, self.face_size if face_pixmap else th) + self.pad_y * 2
         self.resize(w, h + self.tail_h)
         self.update()
 
@@ -123,27 +145,55 @@ class BubbleWidget(QWidget):
         p.drawLine(cx - half_tail, body_h - 2, cx, body_h + self.tail_h - 1)
         p.drawLine(cx + half_tail, body_h - 2, cx, body_h + self.tail_h - 1)
 
-        # 文字
-        p.setPen(QColor(55, 55, 55))
-        p.drawText(rect, Qt.AlignCenter, self.text)
+        # 表情图（左侧）
+        text_x_offset = 0
+        if self.face_pixmap and not self.face_pixmap.isNull():
+            fy = (body_h - self.face_size) // 2
+            p.drawPixmap(QRect(self.pad_x, fy, self.face_size, self.face_size),
+                         self.face_pixmap)
+            text_x_offset = self.face_size + 8
 
-    def show_phrase(self, text, duration=2600):
-        self.set_text(text)
+        # 文字
+        text_rect = QRect(rect.x() + text_x_offset, rect.y(),
+                          rect.width() - text_x_offset, rect.height())
+        p.setPen(QColor(55, 55, 55))
+        p.drawText(text_rect, Qt.AlignCenter, self.text)
+
+    def show_phrase(self, text, face_pixmap=None, duration=2600):
+        self.set_content(text, face_pixmap)
         self.show()
         self.raise_()
         self.timer.start(duration)
 
 
 class DesktopPet(QWidget):
-    def __init__(self, image_path):
+    # 精灵类型
+    POSE_NAMES = ["pose1", "pose2", "pose3", "pose4", "pose5", "pose6"]
+    ACTION_NAMES = ["action1", "action2", "action3", "action4", "action5", "action6"]
+    FACE_NAMES = ["face1", "face2", "face3", "face4", "face5", "face6", "face7", "face8"]
+
+    def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
 
-        self.source_pixmap = QPixmap(image_path)
-        if self.source_pixmap.isNull():
-            raise FileNotFoundError(f"无法加载图片: {image_path}")
+        # 加载所有精灵
+        self.poses = [load_sprite(n) for n in self.POSE_NAMES]
+        self.actions = [load_sprite(n) for n in self.ACTION_NAMES]
+        self.faces = [load_sprite(n) for n in self.FACE_NAMES]
+
+        # 过滤无效精灵
+        self.poses = [pm for pm in self.poses if not pm.isNull()]
+        self.actions = [pm for pm in self.actions if not pm.isNull()]
+        self.faces = [pm for pm in self.faces if not pm.isNull()]
+
+        if not self.poses:
+            raise FileNotFoundError("无法加载任何站姿精灵图，请检查 sprites/ 目录")
+
+        # 当前显示的精灵
+        self.pose_index = 0
+        self.current_pixmap = self.poses[0]
 
         # 动画状态
         self.offset_x = 0.0
@@ -176,9 +226,25 @@ class DesktopPet(QWidget):
         self._update_window_size()
         self._set_initial_position()
 
+    # ---------- 精灵管理 ----------
+    def _switch_pose(self, index):
+        """切换站姿精灵"""
+        if self.poses:
+            self.pose_index = index % len(self.poses)
+            self.current_pixmap = self.poses[self.pose_index]
+            self.update()
+
+    def _random_pose(self):
+        """随机切换到一个不同的站姿"""
+        if len(self.poses) > 1:
+            new_idx = random.randint(0, len(self.poses) - 1)
+            if new_idx == self.pose_index:
+                new_idx = (new_idx + 1) % len(self.poses)
+            self._switch_pose(new_idx)
+
     # ---------- 尺寸 / 位置 ----------
     def _update_window_size(self):
-        pm = self.source_pixmap
+        pm = self.current_pixmap
         aspect = pm.width() / pm.height()
         self.char_w = int(self.target_height * aspect)
         self.char_h = int(self.target_height)
@@ -200,7 +266,7 @@ class DesktopPet(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        pm = self.source_pixmap
+        pm = self.current_pixmap
 
         pw = self.char_w * self.scale_x
         ph = self.char_h * self.scale_y
@@ -308,9 +374,10 @@ class DesktopPet(QWidget):
         if random.random() < 0.9:
             self.show_bubble()
 
-    def _run_anim(self, keyframes, duration):
+    def _run_anim(self, keyframes, duration, sprite_switches=None):
         """以进度 0->1 驱动，自行对各通道做线性插值。
-        keyframes: [(t, {channel: value}), ...]"""
+        keyframes: [(t, {channel: value}), ...]
+        sprite_switches: 可选，[(t, pixmap), ...] 在指定时间点切换精灵图"""
         anim = QVariantAnimation(self)
         anim.setDuration(duration)
         anim.setStartValue(0.0)
@@ -318,14 +385,26 @@ class DesktopPet(QWidget):
         anim.setEasingCurve(QEasingCurve.Linear)
         channels = list(keyframes[0][1].keys())
         chan_keys = {ch: [(kf[0], kf[1][ch]) for kf in keyframes] for ch in channels}
+        # 记录原始精灵，动画结束后恢复
+        original_pixmap = self.current_pixmap
 
         def on_value(progress):
             for ch in channels:
                 setattr(self, ch, self._interp(chan_keys[ch], progress))
+            # 切换精灵
+            if sprite_switches:
+                for t_switch, pm in sprite_switches:
+                    if progress >= t_switch:
+                        self.current_pixmap = pm
+            self.update()
+
+        def on_finished():
+            self._finish_anim()
+            self.current_pixmap = original_pixmap
             self.update()
 
         anim.valueChanged.connect(on_value)
-        anim.finished.connect(self._finish_anim)
+        anim.finished.connect(on_finished)
         anim.start()
         self.current_anim = anim
 
@@ -353,7 +432,7 @@ class DesktopPet(QWidget):
         self.update()
         self.current_anim = None
 
-    # 跳跃：抛物线
+    # 跳跃：抛物线 + 切换动作精灵
     def play_jump(self):
         jh = self.char_h * 0.40
         steps = 10
@@ -363,7 +442,15 @@ class DesktopPet(QWidget):
             y = -4.0 * jh * t * (1.0 - t)  # 抛物线，峰在 t=0.5
             keys.append((t, {"offset_y": y}))
         keys.append((1.0, {"offset_y": 0.0}))
-        self._run_anim(keys, 620)
+
+        # 跳跃过程中切换动作精灵
+        sprite_switches = []
+        if self.actions:
+            n = len(self.actions)
+            for i in range(n):
+                sprite_switches.append((i / n, self.actions[i % n]))
+
+        self._run_anim(keys, 620, sprite_switches)
 
     # 压扁回弹
     def play_squash(self):
@@ -374,7 +461,11 @@ class DesktopPet(QWidget):
             (0.70, {"scale_x": 1.04, "scale_y": 0.97}),
             (1.00, {"scale_x": 1.00, "scale_y": 1.00}),
         ]
-        self._run_anim(keys, 620)
+        # 压扁时切换到第2个动作精灵（如果有）
+        sprite_switches = []
+        if len(self.actions) > 1:
+            sprite_switches.append((0.0, self.actions[1]))
+        self._run_anim(keys, 620, sprite_switches)
 
     # 左右抖动：阻尼振荡
     def play_shake(self):
@@ -390,19 +481,29 @@ class DesktopPet(QWidget):
             (0.88, {"offset_x": -amp * 0.06}),
             (1.00, {"offset_x": 0.0}),
         ]
-        self._run_anim(keys, 620)
+        # 抖动时切换到第3个动作精灵（如果有）
+        sprite_switches = []
+        if len(self.actions) > 2:
+            sprite_switches.append((0.0, self.actions[2]))
+        self._run_anim(keys, 620, sprite_switches)
 
     # ---------- 气泡 ----------
-    def show_bubble(self):
-        text = random.choice(PHRASES)
-        self.bubble.set_text(text)
+    def show_bubble(self, text=None, face=None):
+        if text is None:
+            # 根据当前互动类型选择短语
+            interaction_type = ["jump", "squash", "shake"][
+                (self.interaction_index - 1) % 3]
+            text = random.choice(INTERACTION_PHRASES.get(interaction_type, PHRASES))
+        if face is None and self.faces:
+            face = random.choice(self.faces)
+        self.bubble.set_content(text, face)
         bx = self.x() + (self.win_w - self.bubble.width()) // 2
         by = self.y() - self.bubble.height() - 4
         screen = QApplication.primaryScreen().availableGeometry()
         bx = max(screen.x() + 4, min(bx, screen.right() - self.bubble.width() - 4))
         by = max(screen.y() + 4, by)
         self.bubble.move(bx, by)
-        self.bubble.show_phrase(text, 2600)
+        self.bubble.show_phrase(text, face, 2600)
 
 
 def main():
@@ -414,18 +515,15 @@ def main():
     sys.excepthook = _excepthook
 
     app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)  # 关闭窗口时隐藏到托盘，不退出
+    app.setQuitOnLastWindowClosed(False)
 
-    img = resource_path("character.png")
-    if not os.path.exists(img):
-        img = resource_path(os.path.join("resource", "character.png"))
-
-    pet = DesktopPet(img)
+    pet = DesktopPet()
     pet.show()
 
     # 创建系统托盘图标
     tray_icon = QSystemTrayIcon()
-    tray_pixmap = QPixmap(img).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    # 使用第一个站姿精灵作为托盘图标
+    tray_pixmap = pet.poses[0].scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
     tray_icon.setIcon(QIcon(tray_pixmap))
     tray_icon.setToolTip("桌面宠物")
 
