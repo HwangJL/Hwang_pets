@@ -29,6 +29,9 @@ from PyQt5.QtCore import (Qt, QTimer, QRectF, QVariantAnimation,
 from PyQt5.QtGui import (QPixmap, QPainter, QColor, QFont, QPen, QBrush,
                          QPainterPath, QFontMetrics, QIcon)
 
+from config_manager import load_config, save_config
+from console_window import ConsoleWindow
+
 # 确保 Qt 能找到平台插件（PyInstaller windowed 模式必需）
 if hasattr(sys, '_MEIPASS'):
     os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.join(
@@ -86,31 +89,48 @@ INTERACTION_PHRASES = {
 
 
 class BubbleWidget(QWidget):
-    """对话气泡：不透明白色圆角背景 + 下方小尾巴 + 可选表情图"""
+    """对话气泡：不透明白色圆角背景 + 下方小尾巴 + 可选表情图，支持悬浮暂停"""
 
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_Hover)
         self.text = ""
-        self.face_pixmap = None  # 可选的表情图
+        self.face_pixmap = None
         self.font = QFont("Microsoft YaHei", 10, QFont.Bold)
         self.pad_x = 16
         self.pad_y = 10
         self.tail_h = 10
-        self.face_size = 32  # 表情图显示大小
+        self.face_size = 32
+        self.max_width = 360
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.hide)
+        self._duration = 3000
+
+    def enterEvent(self, event):
+        """鼠标悬浮时暂停自动消失"""
+        self.timer.stop()
+
+    def leaveEvent(self, event):
+        """鼠标离开时恢复计时"""
+        self.timer.start(self._duration)
 
     def set_content(self, text, face_pixmap=None):
         self.text = text
         self.face_pixmap = face_pixmap
         fm = QFontMetrics(self.font)
-        tw = fm.horizontalAdvance(text)
-        th = fm.height()
         face_w = self.face_size + 8 if face_pixmap else 0
+        # 可用文本宽度（减去内边距和表情图）
+        avail_w = self.max_width - self.pad_x * 2 - 6 - face_w
+        if avail_w < 80:
+            avail_w = 80
+        # 用 boundingRect 计算自动换行后的实际尺寸
+        text_flags = Qt.TextWordWrap
+        br = fm.boundingRect(0, 0, avail_w, 9999, text_flags, text)
+        tw = br.width()
+        th = br.height()
         w = tw + self.pad_x * 2 + 6 + face_w
         h = max(th, self.face_size if face_pixmap else th) + self.pad_y * 2
         self.resize(w, h + self.tail_h)
@@ -153,16 +173,17 @@ class BubbleWidget(QWidget):
                          self.face_pixmap)
             text_x_offset = self.face_size + 8
 
-        # 文字
-        text_rect = QRect(rect.x() + text_x_offset, rect.y(),
-                          rect.width() - text_x_offset, rect.height())
+        # 文字（支持多行自动换行）
+        text_rect = QRect(rect.x() + text_x_offset + self.pad_x, rect.y(),
+                          rect.width() - text_x_offset - self.pad_x * 2, rect.height())
         p.setPen(QColor(55, 55, 55))
-        p.drawText(text_rect, Qt.AlignCenter, self.text)
+        p.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, self.text)
 
-    def show_phrase(self, text, face_pixmap=None, duration=2600):
+    def show_phrase(self, text, face_pixmap=None, duration=3000):
         self.set_content(text, face_pixmap)
         self.show()
         self.raise_()
+        self._duration = duration
         self.timer.start(duration)
 
 
@@ -219,9 +240,13 @@ class DesktopPet(QWidget):
         # 气泡
         self.bubble = BubbleWidget()
 
+        # 配置
+        self.config = load_config()
+
         # 系统托盘
         self._tray = None
         self._closing = False
+        self._console = None  # 控制台窗口引用
 
         self._update_window_size()
         self._set_initial_position()
@@ -322,6 +347,9 @@ class DesktopPet(QWidget):
             "QMenu::separator{height:1px;background:#ddd;margin:4px 8px;}"
         )
 
+        console_act = menu.addAction("打开控制台")
+        console_act.triggered.connect(self.open_console)
+
         size_menu = menu.addMenu("调整大小")
         for label, h in [("小  120", 120), ("中  220", 220),
                          ("大  320", 320), ("超大 450", 450)]:
@@ -355,11 +383,25 @@ class DesktopPet(QWidget):
         self.bubble.setWindowFlags(bubble_flags)
         self.bubble.setAttribute(Qt.WA_TranslucentBackground)
         self.bubble.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.bubble.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.bubble.setAttribute(Qt.WA_Hover)
+
+    def open_console(self):
+        """打开控制台窗口"""
+        if self._console is None:
+            self._console = ConsoleWindow(self.config, self._on_config_changed)
+        self._console.show()
+        self._console.raise_()
+        self._console.activateWindow()
+
+    def _on_config_changed(self):
+        """控制台配置变更回调，重新加载配置"""
+        self.config = load_config()
 
     def _quit(self):
         self._closing = True
         self.bubble.close()
+        if self._console is not None:
+            self._console.close()
         if self._tray is not None:
             self._tray.hide()
         QApplication.quit()
@@ -371,8 +413,26 @@ class DesktopPet(QWidget):
         action = self.interactions[self.interaction_index % len(self.interactions)]
         self.interaction_index += 1
         action()
-        if random.random() < 0.9:
-            self.show_bubble()
+        # 始终显示气泡（PRD：点击桌宠弹出已配置话术）
+        self.show_bubble()
+
+    def _get_phrase_text(self):
+        """根据配置获取话术文本"""
+        phrase = self.config.get("phrase", {})
+        mode = phrase.get("mode", "custom")
+        if mode == "todo":
+            todos = self.config.get("knowledge_base", {}).get("todos", "")
+            if todos:
+                return todos
+            return "暂无本周待办内容，请先梳理知识库"
+        else:
+            custom = phrase.get("custom_text", "")
+            if custom:
+                return custom
+            # 无自定义内容时使用随机默认话术
+            interaction_type = ["jump", "squash", "shake"][
+                (self.interaction_index - 1) % 3]
+            return random.choice(INTERACTION_PHRASES.get(interaction_type, PHRASES))
 
     def _run_anim(self, keyframes, duration, sprite_switches=None):
         """以进度 0->1 驱动，自行对各通道做线性插值。
@@ -490,10 +550,7 @@ class DesktopPet(QWidget):
     # ---------- 气泡 ----------
     def show_bubble(self, text=None, face=None):
         if text is None:
-            # 根据当前互动类型选择短语
-            interaction_type = ["jump", "squash", "shake"][
-                (self.interaction_index - 1) % 3]
-            text = random.choice(INTERACTION_PHRASES.get(interaction_type, PHRASES))
+            text = self._get_phrase_text()
         if face is None and self.faces:
             face = random.choice(self.faces)
         self.bubble.set_content(text, face)
@@ -503,7 +560,7 @@ class DesktopPet(QWidget):
         bx = max(screen.x() + 4, min(bx, screen.right() - self.bubble.width() - 4))
         by = max(screen.y() + 4, by)
         self.bubble.move(bx, by)
-        self.bubble.show_phrase(text, face, 2600)
+        self.bubble.show_phrase(text, face, 3000)
 
 
 def main():
@@ -527,7 +584,7 @@ def main():
     tray_icon.setIcon(QIcon(tray_pixmap))
     tray_icon.setToolTip("桌面宠物")
 
-    # 托盘右键菜单
+    # 托盘右键菜单（PRD：打开控制台、退出程序）
     tray_menu = QMenu()
     tray_menu.setStyleSheet(
         "QMenu{background:#ffffff;border:1px solid #bbb;border-radius:8px;"
@@ -537,11 +594,14 @@ def main():
         "QMenu::separator{height:1px;background:#ddd;margin:4px 8px;}"
     )
 
+    console_action = tray_menu.addAction("打开控制台")
+    console_action.triggered.connect(pet.open_console)
+    tray_menu.addSeparator()
     show_action = tray_menu.addAction("显示/隐藏")
     show_action.triggered.connect(
         lambda: pet.show() if pet.isHidden() else pet.hide())
     tray_menu.addSeparator()
-    quit_action = tray_menu.addAction("退出")
+    quit_action = tray_menu.addAction("退出程序")
     quit_action.triggered.connect(pet._quit)
 
     tray_icon.setContextMenu(tray_menu)
