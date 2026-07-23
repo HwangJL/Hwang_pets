@@ -4,13 +4,18 @@
 
 ## 快速开始
 
-直接运行已打包的 exe：
+直接下载 exe 运行：
 
-```
-dist/DesktopPet.exe
-```
+[下载 DesktopPet.exe](https://github.com/HwangJL/Hwang_pets/releases/download/v2.3/DesktopPet.exe)
 
 双击即可启动，无需安装 Python 或任何依赖。
+
+也可以从源码运行：
+
+```bash
+pip install PyQt5 numpy Pillow
+python desktop_pet.py
+```
 
 ## 版本记录
 
@@ -171,15 +176,6 @@ dist/DesktopPet.exe
 - 其他兼容 OpenAI 格式的第三方服务
 
 配置时填入完整的 API 地址、密钥和模型名称即可。
-
-## 从源码运行
-
-需要 Python 3.8+ 和 PyQt5：
-
-```bash
-pip install PyQt5 numpy Pillow
-python desktop_pet.py
-```
 
 ## 重新打包 exe
 
