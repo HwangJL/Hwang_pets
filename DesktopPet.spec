@@ -5,7 +5,7 @@ a = Analysis(
     ['desktop_pet.py'],
     pathex=[],
     binaries=[],
-    datas=[('sprites', 'sprites')],
+    datas=[('sprites', 'sprites'), ('sprite_slicer.py', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

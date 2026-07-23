@@ -21,6 +21,13 @@ DEFAULT_CONFIG = {
     "phrase": {
         "mode": "custom",  # "custom" 或 "todo"
         "custom_text": ""
+    },
+    "character_sheet": {
+        "mode": "upload",           # "ai_gen" 或 "upload"
+        "reference_image": "",      # 参考图路径
+        "sheet_image": "",          # 设定图路径
+        "image_gen_url": "",        # 图片生成API地址
+        "image_gen_model": ""       # 图片生成模型名
     }
 }
 

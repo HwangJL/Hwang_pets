@@ -22,6 +22,7 @@ dist/DesktopPet.exe
 | v2.0 | 2026-07-22 | 控制台三大模块（AI知识库待办、话术自定义、AI大模型接入）、配置持久化、气泡悬浮暂停 |
 | v2.1 | 2026-07-22 | 测试连通性结果改为标签持久展示（✓/✗+时间戳）；待办生成结果展示成功/失败状态+时间+失败原因；AITodo线程添加详细分步日志 |
 | v2.2 | 2026-07-22 | 新增AI渠道选择（火山引擎豆包/OpenAI/通义千问/DeepSeek/讯飞星火），切换渠道自动填充URL和模型名 |
+| v2.3 | 2026-07-23 | 新增功能四：角色设定与外观更新（AI生成设定图/上传设定图切片），自动连通区域检测切片，桌宠外观实时更新 |
 
 ## 功能特性
 
@@ -69,7 +70,29 @@ dist/DesktopPet.exe
 - **API 密钥**：脱敏显示（星号隐藏），支持明文/隐藏切换
 - **模型名称**：自定义输入（如 `gpt-3.5-turbo`、`qwen-plus`、`spark` 等）
 - 保存时校验：AI 开启状态下任一配置为空则提示完善
-- **测试连通性**：点击后调用 AI 接口验证配置有效性，结果持久展示在标签中——成功显示绿色 ✓ + 时间戳 + AI 回复摘要，失败显示红色 ✗ + 时间戳 + 错误原因
+- **测试连通性**：点击后调用 AI 接口验证配置有效性，结果持久展示在标签中--成功显示绿色 ✓ + 时间戳 + AI 回复摘要，失败显示红色 ✗ + 时间戳 + 错误原因
+
+#### 功能四：角色设定与外观更新
+
+支持两种模式更新桌宠外观，切片后自动重载精灵图，无需重启程序。
+
+**模式A：AI生成设定图**
+- 上传任意参考图片（人物、动物、玩偶、机器人等）
+- AI 视觉模型（如 GPT-4o）分析参考图，提取角色特征（轮廓、配色、五官、服装等）
+- AI 图片生成 API（如 DALL-E 3）根据特征描述生成 Q版卡通角色设定图
+- 设定图包含多视角（正面/背面/侧面/3/4视角）、多动作（站立/行走/奔跑/坐下/跳跃）、多表情（默认/开心/困惑/专注/生气/受惊/得意/困倦）
+- 图片生成 API 地址和模型名切换 AI 渠道时自动填充
+
+**模式B：上传设定图切片**
+- 直接上传已做好的角色设定图，跳过 AI 生成步骤
+
+**自动切片算法**
+- 使用 numpy 连通区域检测自动找到设定图中每个角色/表情的边界框
+- 按 Y 坐标聚类分3行：第1行映射为 pose1-6、第2行 action1-6、第3行 face1-8
+- 行内按 X 坐标排序，自动裁除透明边缘
+- 切片完成后覆盖 `sprites/` 目录下同名文件，桌宠外观立即更新
+
+**设定图布局要求**：第1行6个全身站姿从左到右排列，第2行6个动作姿态，第3行8个表情头像，背景使用纯色
 
 ## 操作说明
 
@@ -91,13 +114,14 @@ dist/DesktopPet.exe
 │   └── DesktopPet.exe      # 打包好的可执行文件（直接双击运行）
 ├── desktop_pet.py            # 主程序源码
 ├── config_manager.py         # 配置持久化管理
-├── console_window.py         # 控制台窗口（三大功能模块）
+├── console_window.py         # 控制台窗口（四大功能模块）
+├── sprite_slicer.py          # 自动切片工具（连通区域检测）
 ├── character.png             # 原始角色图（备用）
 ├── sprites/                   # 切片精灵图
 │   ├── pose1~6.png            # 6 种站姿
 │   ├── action1~6.png          # 6 种动作
 │   └── face1~8.png            # 8 种表情
-├── slice_sprites.py           # 精灵图切片脚本
+├── slice_sprites.py           # 精灵图切片脚本（硬编码坐标，备用）
 ├── remove_bg.py               # 背景去除脚本
 ├── DesktopPet.spec            # PyInstaller 打包配置
 ├── PRD.md                     # 产品需求文档
@@ -126,6 +150,13 @@ dist/DesktopPet.exe
   "phrase": {
     "mode": "custom",
     "custom_text": ""
+  },
+  "character_sheet": {
+    "mode": "upload",
+    "reference_image": "",
+    "sheet_image": "",
+    "image_gen_url": "",
+    "image_gen_model": ""
   }
 }
 ```
@@ -146,7 +177,7 @@ dist/DesktopPet.exe
 需要 Python 3.8+ 和 PyQt5：
 
 ```bash
-pip install PyQt5
+pip install PyQt5 numpy Pillow
 python desktop_pet.py
 ```
 
@@ -154,10 +185,10 @@ python desktop_pet.py
 
 ```bash
 pip install pyinstaller
-pyinstaller --noconsole --onefile --add-data "sprites;sprites" --name DesktopPet desktop_pet.py
+pyinstaller --noconsole --onefile --add-data "sprites;sprites" --add-data "sprite_slicer.py;." --name DesktopPet desktop_pet.py
 ```
 
-打包结果在 `dist/DesktopPet.exe`（约 36MB，单文件，内含所有精灵素材）。
+打包结果在 `dist/DesktopPet.exe`（约 42MB，单文件，内含所有精灵素材和切片工具）。
 
 ## 从原始图重新切片
 

@@ -388,7 +388,7 @@ class DesktopPet(QWidget):
     def open_console(self):
         """打开控制台窗口"""
         if self._console is None:
-            self._console = ConsoleWindow(self.config, self._on_config_changed)
+            self._console = ConsoleWindow(self.config, self._on_config_changed, self._on_sprites_updated)
         self._console.show()
         self._console.raise_()
         self._console.activateWindow()
@@ -396,6 +396,22 @@ class DesktopPet(QWidget):
     def _on_config_changed(self):
         """控制台配置变更回调，重新加载配置"""
         self.config = load_config()
+
+    def reload_sprites(self):
+        """重新加载 sprites 目录下的所有精灵图"""
+        self.poses = [pm for pm in (load_sprite(n) for n in self.POSE_NAMES) if not pm.isNull()]
+        self.actions = [pm for pm in (load_sprite(n) for n in self.ACTION_NAMES) if not pm.isNull()]
+        self.faces = [pm for pm in (load_sprite(n) for n in self.FACE_NAMES) if not pm.isNull()]
+        if not self.poses:
+            return
+        self.pose_index = 0
+        self.current_pixmap = self.poses[0]
+        self._update_window_size()
+        self.update()
+
+    def _on_sprites_updated(self):
+        """精灵图更新后重新加载"""
+        self.reload_sprites()
 
     def _quit(self):
         self._closing = True
